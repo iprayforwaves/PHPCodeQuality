@@ -1,0 +1,174 @@
+#!/usr/bin/php
+<?php
+ 
+require __DIR__ . '/../../vendor/autoload.php';
+ 
+use Symfony\Component\Console\Application;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Process\ProcessBuilder;
+ 
+class CodeQualityTool extends Application
+{
+    private $output;
+    private $input;
+    private $projectRoot;
+ 
+    //The locations of the files you want to measure. Add/remove as needed.
+    const PHP_FILES = '/^(.*)(\.php)$/';
+ 
+    public function __construct()
+    {
+        /** OS agnostic */
+        $this->projectRoot = realpath(__DIR__ . '/../../');
+        parent::__construct('Code Quality Tool', '1.0.0');
+    }
+ 
+    /**
+     * @param $file
+     *
+     * @return bool
+     */
+    private function shouldProcessFile($file)
+    {
+        return preg_match(self::PHP_FILES, $file);
+    }
+ 
+    public function doRun(InputInterface $input, OutputInterface $output)
+    {
+        $this->input  = $input;
+        $this->output = $output;
+ 
+        $output->writeln('<fg=white;options=bold;bg=cyan> -- Code Quality Pre-Commit Check -- </fg=white;options=bold;bg=cyan>');
+        $output->writeln('<info>Fetching files</info>');
+        $files = $this->extractCommitedFiles();
+ 
+        //$output->writeln('<info>Fixing code style</info>');
+        //$this->codeStyle($files);
+ 
+        $output->writeln('<info>Checking composer</info>');
+        if (!$this->checkComposer($files)) {
+            throw new Exception('composer.lock must be commited if composer.json is modified!');
+        }
+ 
+        $output->writeln('<info>Checking for messy code with PHPMD</info>');
+        if (!$this->checkPhpMd($files)) {
+            throw new Exception(sprintf('There are PHPMD violations!'));
+        }
+ 
+        $output->writeln('<fg=white;options=bold;bg=green> -- Code Quality: Passed! -- </fg=white;options=bold;bg=green>');
+    }
+ 
+    /**
+     * @return array
+     */
+    private function extractCommitedFiles()
+    {
+        $files  = [];
+        $output = [];
+ 
+        exec("git diff --cached --name-status --diff-filter=ACM", $output);
+ 
+        foreach ($output as $line) {
+            $action  = trim($line[0]);
+            $files[] = trim(substr($line, 1));
+        }
+ 
+        return $files;
+    }
+ 
+    /**
+     * @param $files
+     *
+     * This function ensures that when the composer.json file is edited
+     * the composer.lock is also updated and commited
+     *
+     * @throws \Exception
+     */
+    private function checkComposer($files)
+    {
+        $composerJsonDetected = false;
+        $composerLockDetected = false;
+ 
+        foreach ($files as $file) {
+            if ($file === 'composer.json') {
+                $composerJsonDetected = true;
+            }
+ 
+            if ($file === 'composer.lock') {
+                $composerLockDetected = true;
+            }
+        }
+ 
+        if ($composerJsonDetected && !$composerLockDetected) {
+            return false;
+        }
+        return true;
+    }
+ 
+    /**
+     * @param array $files
+     *
+     * @return bool
+     */
+    private function codeStyle(array $files)
+    {
+        $commandLineArgs = [
+            'bin' . DIRECTORY_SEPARATOR . 'php-cs-fixer',
+            'fix',
+            null,
+            '--level=psr2'
+        ];
+ 
+        foreach ($files as $file) {
+            if (!$this->shouldProcessFile($file)) {
+                continue;
+            }
+ 
+            $commandLineArgs[2] = $file;
+            $processBuilder     = new ProcessBuilder($commandLineArgs);
+            $processBuilder->setWorkingDirectory($this->projectRoot);
+            $phpCsFixer = $processBuilder->getProcess();
+            $phpCsFixer->run();
+ 
+            exec('git add ' . $file);
+        }
+    }
+ 
+    /**
+     * @param $files
+     *
+     * @return bool
+     */
+    private function checkPhpMd($files)
+    {
+        $succeed = true;
+ 
+        foreach ($files as $file) {
+            if (!$this->shouldProcessFile($file)) {
+                continue;
+            }
+            $processBuilder = new ProcessBuilder([
+                'bin/phpmd',
+                $file,
+                'text',
+                'cleancode,codesize,design,unusedcode'
+            ]);
+            $processBuilder->setWorkingDirectory($this->projectRoot);
+            $process = $processBuilder->getProcess();
+            $process->run();
+ 
+            if (!$process->isSuccessful()) {
+                $this->output->writeln($file);
+                $this->output->writeln(sprintf('<error>%s</error>', trim($process->getErrorOutput())));
+                $this->output->writeln(sprintf('<info>%s</info>', trim($process->getOutput())));
+                $succeed = false;
+            }
+        }
+ 
+        return $succeed;
+    }
+}
+ 
+$console = new CodeQualityTool();
+$console->run();
