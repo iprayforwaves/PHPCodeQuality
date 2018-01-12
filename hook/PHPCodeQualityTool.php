@@ -8,20 +8,23 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Process\ProcessBuilder;
  
-class CodeQualityTool extends Application
+class PHPCodeQualityTool extends Application
 {
-    private $output;
+    private $commit;
     private $input;
+    private $output;
     private $projectRoot;
  
     //The locations of the files you want to measure. Add/remove as needed.
     const PHP_FILES = '/^(.*)(\.php)$/';
  
-    public function __construct()
+    public function __construct($commit = false)
     {
+        $this->commit = $commit;
+
         /** OS agnostic */
         $this->projectRoot = realpath(__DIR__ . '/../../');
-        parent::__construct('Code Quality Tool', '1.0.0');
+        parent::__construct('PHP Code Quality Tool', '1.0.0');
     }
  
     /**
@@ -39,37 +42,46 @@ class CodeQualityTool extends Application
         $this->input  = $input;
         $this->output = $output;
  
-        $output->writeln('<fg=white;options=bold;bg=cyan> -- Code Quality Pre-Commit Check -- </fg=white;options=bold;bg=cyan>');
+        $output->writeln('<fg=white;options=bold;bg=cyan> -- PHP Code Quality Check -- </fg=white;options=bold;bg=cyan>');
         $output->writeln('<info>Fetching files</info>');
-        $files = $this->extractCommitedFiles();
- 
-        //$output->writeln('<info>Fixing code style</info>');
-        //$this->codeStyle($files);
+        $files = $this->extractCommitedFiles($this->commit);
  
         $output->writeln('<info>Checking composer</info>');
         if (!$this->checkComposer($files)) {
             throw new Exception('composer.lock must be commited if composer.json is modified!');
         }
- 
-        $output->writeln('<info>Checking for messy code with PHPMD</info>');
-        if (!$this->checkPhpMd($files)) {
-            throw new Exception(sprintf('There are PHPMD violations!'));
+
+        $output->writeln('<info>Running PHPLint</info>');
+        if (!$this->phpLint($files)) {
+            throw new Exception('There are some PHP syntax errors!');
+        }
+
+        $output->writeln('<info>Running Code Style</info>');
+        if (!$this->codeStyle()) {
+            throw new Exception(sprintf('<error>%s</error>', trim($this->codeStyle())));
         }
  
-        $output->writeln('<fg=white;options=bold;bg=green> -- Code Quality: Passed! -- </fg=white;options=bold;bg=green>');
+        $output->writeln('<info>Running PHPMD</info>');
+        if (!$this->checkPhpMd($files)) {
+            $output->writeln('<fg=white;options=bold;bg=red> -- Code Quality Check: FAILED! -- </fg=white;options=bold;bg=red>');
+        }
+ 
+        $output->writeln('<fg=white;options=bold;bg=green> -- Code Quality Check: PASSED! -- </fg=white;options=bold;bg=green>');
     }
  
     /**
      * @return array
      */
-    private function extractCommitedFiles()
+    private function extractCommitedFiles($commit = false)
     {
         $files  = [];
         $output = [];
- 
-        exec("git diff --cached --name-status --diff-filter=ACM", $output);
+        echo($commit);
+
+        ($commit) ? exec('git diff --name-status --diff-filter=ACM master...' . $commit, $output) : exec("git diff --cached --name-status --diff-filter=ACM", $output);
  
         foreach ($output as $line) {
+            $this->output->writeln($line);
             $action  = trim($line[0]);
             $files[] = trim(substr($line, 1));
         }
@@ -107,32 +119,15 @@ class CodeQualityTool extends Application
     }
  
     /**
-     * @param array $files
      *
      * @return bool
      */
-    private function codeStyle(array $files)
+    private function codeStyle()
     {
-        $commandLineArgs = [
-            'bin' . DIRECTORY_SEPARATOR . 'php-cs-fixer',
-            'fix',
-            null,
-            '--level=psr2'
-        ];
- 
-        foreach ($files as $file) {
-            if (!$this->shouldProcessFile($file)) {
-                continue;
-            }
- 
-            $commandLineArgs[2] = $file;
-            $processBuilder     = new ProcessBuilder($commandLineArgs);
-            $processBuilder->setWorkingDirectory($this->projectRoot);
-            $phpCsFixer = $processBuilder->getProcess();
-            $phpCsFixer->run();
- 
-            exec('git add ' . $file);
-        }
+        $result = shell_exec($this->projectRoot.'/.git/hooks/codestyle.sh');
+        echo $result;
+
+        return $result;
     }
  
     /**
@@ -152,7 +147,7 @@ class CodeQualityTool extends Application
                 'bin/phpmd',
                 $file,
                 'text',
-                'cleancode,codesize,design,unusedcode'
+                '../PHPCodeQuality/ruleset/ruleset.xml'
             ]);
             $processBuilder->setWorkingDirectory($this->projectRoot);
             $process = $processBuilder->getProcess();
@@ -168,7 +163,41 @@ class CodeQualityTool extends Application
  
         return $succeed;
     }
-}
+
+    /**
+     * @param $files
+     *
+     * @return bool
+     */
+    private function phpLint($files)
+    {
+        $needle = '/(\.php)|(\.inc)$/';
+        $succeed = true;
  
-$console = new CodeQualityTool();
-$console->run();
+        foreach ($files as $file) {
+            if (!preg_match($needle, $file)) {
+                continue;
+            }
+ 
+            $processBuilder = new ProcessBuilder(array('php', '-l', $this->projectRoot.'/'.$file));
+            $process = $processBuilder->getProcess();
+            $process->run();
+ 
+            if (!$process->isSuccessful()) {
+                $this->output->writeln($file);
+                $this->output->writeln(sprintf('<error>%s</error>', trim($process->getErrorOutput())));
+ 
+                if ($succeed) {
+                    $succeed = false;
+                }
+            }
+        }
+ 
+        return $succeed;
+    }
+}
+
+if($argv[1]){
+    $console = new PhpCodeQualityTool($argv[1]);
+    $console->run();
+}

@@ -38,6 +38,7 @@
   <!-- se importa naming y se excluye ShortVariable para ser ajustada despues. -->
   <rule ref="rulesets/naming.xml">
       <exclude name="ShortVariable"/>
+      <exclude name="LongVariable"/>
   </rule>
   <rule ref="rulesets/naming.xml/ShortVariable"
         since="0.2"
@@ -46,7 +47,7 @@
         externalInfoUrl="http://phpmd.org/rules/naming.html#shortvariable">
       <priority>3</priority>
       <properties>
-          <property name="minimum" description="Minimum length for a variable, property or parameter name" value="3"/>
+          <property name="minimum" description="Minimum length for a variable, property or parameter name" value="2"/>
           <property name="exceptions" value="id,q,w,i,j,v,e,f,fp" />
       </properties>
   </rule>
