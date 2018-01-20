@@ -4,8 +4,10 @@
 require __DIR__ . '/../../vendor/autoload.php';
  
 use Symfony\Component\Console\Application;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ConfirmationQuestion;
 use Symfony\Component\Process\ProcessBuilder;
  
 class PHPCodeQualityTool extends Application
@@ -39,6 +41,7 @@ class PHPCodeQualityTool extends Application
  
     public function doRun(InputInterface $input, OutputInterface $output)
     {
+        $error = false;
         $this->input  = $input;
         $this->output = $output;
  
@@ -48,25 +51,38 @@ class PHPCodeQualityTool extends Application
  
         $output->writeln('<info>Checking composer</info>');
         if (!$this->checkComposer($files)) {
-            throw new Exception('composer.lock must be commited if composer.json is modified!');
+            $output->writeln('composer.lock must be commited if composer.json is modified!');
+            $error = true;
         }
 
         $output->writeln('<info>Running PHPLint</info>');
         if (!$this->phpLint($files)) {
-            throw new Exception('There are some PHP syntax errors!');
+            $output->writeln('There are some PHP syntax errors!');
+            $error = true;
         }
 
         $output->writeln('<info>Running Code Style</info>');
         if (!$this->codeStyle()) {
-            throw new Exception(sprintf('<error>%s</error>', trim($this->codeStyle())));
+            $output->writeln(sprintf('<error>%s</error>', trim($this->codeStyle())));
+            $error = true;
         }
  
         $output->writeln('<info>Running PHPMD</info>');
         if (!$this->checkPhpMd($files)) {
+            throw new Exception('<fg=white;options=bold;bg=red> -- Code Quality Check: FAILED! -- </fg=white;options=bold;bg=red>');
             $output->writeln('<fg=white;options=bold;bg=red> -- Code Quality Check: FAILED! -- </fg=white;options=bold;bg=red>');
+            $error = true;
         }
- 
-        $output->writeln('<fg=white;options=bold;bg=green> -- Code Quality Check: PASSED! -- </fg=white;options=bold;bg=green>');
+        
+        if(!$error){
+            $output->writeln('<fg=white;options=bold;bg=green> -- Code Quality Check: PASSED! -- </fg=white;options=bold;bg=green>');
+        }
+
+        if($error){
+            if(!$this->commit){
+                throw new Exception('<fg=white;options=bold;bg=red> -- CANNOT COMMIT! --');
+            }   
+        }
     }
  
     /**
@@ -198,6 +214,6 @@ class PHPCodeQualityTool extends Application
 }
 
 if($argv[1]){
-    $console = new PhpCodeQualityTool($argv[1]);
+    $console = new PhpCodeQualityTool(false);
     $console->run();
 }

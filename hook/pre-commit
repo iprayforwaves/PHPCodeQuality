@@ -3,5 +3,5 @@
 require __DIR__.'/../../vendor/autoload.php';
 require 'PHPCodeQualityTool.php';
 
-$console = new PhpCodeQualityTool();
+$console = new PhpCodeQualityTool(false);
 $console->run();
